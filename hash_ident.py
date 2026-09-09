@@ -1,66 +1,33 @@
-#!/usr/bin/env python3
-"""hash-ident - Identify hash types and suggest appropriate cracking modes
-
-Authorised security testing only. See README.
-"""
-from __future__ import annotations
-
-import argparse
-import sys
-
-TOOL = "hash-ident"
-DESCRIPTION = "Identify hash types and suggest appropriate cracking modes"
-
-
-def banner() -> None:
-    print(f"[ {TOOL} ] {DESCRIPTION}")
-
-
-def authorised(assume_yes: bool) -> bool:
-    """Refuse to run against a target without an explicit authorisation ack.
-
-    This is not legal cover; it is a deliberate speed bump. Offensive tooling
-    should never run by accident against the wrong target.
-    """
-    if assume_yes:
-        return True
-    ans = input("Do you have written authorisation to test this target? [y/N] ")
-    return ans.strip().lower() in ("y", "yes")
-
-
-def run(args: argparse.Namespace) -> int:
-    """Core routine.
-
-    This is a scaffold: it validates input, states scope, and defines the
-    workflow. Extend `run()` with the checks your engagement needs.
-    """
-    banner()
-    print(f"[*] target : {args.target}")
-    print(f"[*] output : {args.output or '(stdout)'}")
-    print("[*] scaffold ready - implement engagement-specific logic in run().")
+import re, rclib
+def run(ctx):
+    h = ctx.target.strip()
+    hx = bool(re.fullmatch(r"[0-9a-fA-F]+", h))
+    n = len(h)
+    cands = []
+    if hx and n==32: cands=["MD5","NTLM","MD4","LM (half)"]
+    elif hx and n==40: cands=["SHA-1","MySQL5.x (with *)"]
+    elif hx and n==56: cands=["SHA-224"]
+    elif hx and n==64: cands=["SHA-256","SHA3-256","BLAKE2s"]
+    elif hx and n==96: cands=["SHA-384"]
+    elif hx and n==128: cands=["SHA-512","SHA3-512","Whirlpool"]
+    if h.startswith("$2a$") or h.startswith("$2b$") or h.startswith("$2y$"): cands=["bcrypt"]
+    elif h.startswith("$1$"): cands=["md5crypt"]
+    elif h.startswith("$5$"): cands=["sha256crypt"]
+    elif h.startswith("$6$"): cands=["sha512crypt"]
+    elif h.startswith("$argon2"): cands=["Argon2"]
+    elif h.startswith("$krb5tgs$"): cands=["Kerberos TGS-REP (kerberoast)"]
+    elif h.startswith("$krb5asrep$"): cands=["Kerberos AS-REP (asreproast)"]
+    elif ":" in h and re.fullmatch(r"[0-9a-fA-F]{32}:[0-9a-fA-F]{32}", h): cands=["NetNTLM / PWDUMP"]
+    if not cands:
+        ctx.warn("unrecognised format"); return 0
+    ctx.good(f"length {n}" + (" hex" if hx else ""))
+    for c in cands: ctx.finding(f"candidate: {c}", "info")
+    # hashcat mode hints
+    modes = {"MD5":"0","NTLM":"1000","SHA-1":"100","SHA-256":"1400","SHA-512":"1800",
+             "bcrypt":"3200","sha512crypt":"1800","Kerberos TGS-REP (kerberoast)":"13100",
+             "Kerberos AS-REP (asreproast)":"18200","NetNTLM / PWDUMP":"5600"}
+    for c in cands:
+        if c in modes: ctx.step(f"hashcat -m {modes[c]}  ({c})")
+    ctx.data["candidates"] = cands
     return 0
-
-
-def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog=TOOL, description=DESCRIPTION)
-    p.add_argument("target", help="target host, domain, file, or scope identifier")
-    p.add_argument("-o", "--output", help="write results to this file")
-    p.add_argument("-v", "--verbose", action="store_true", help="verbose output")
-    p.add_argument("-y", "--yes", action="store_true", help="skip the authorisation prompt")
-    return p
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
-    if not authorised(args.yes):
-        print("[!] authorisation not confirmed; nothing was done.")
-        return 1
-    try:
-        return run(args)
-    except KeyboardInterrupt:
-        print("\n[!] interrupted.")
-        return 130
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+rclib.main("hash-ident", "Identify hash type + hashcat mode", run)
