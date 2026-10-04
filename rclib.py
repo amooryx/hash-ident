@@ -103,7 +103,8 @@ class Context:
 
 def main(tool: str, description: str, run: Callable[[Context], int],
          extra_args: Callable[[argparse.ArgumentParser], None] | None = None,
-         needs_target: bool = True) -> int:
+         needs_target: bool = True,
+         max_target_length: int | None = None) -> int:
     """Standard entrypoint. `run(ctx)` does the work and returns an exit code."""
     p = argparse.ArgumentParser(prog=tool, description=description)
     if needs_target:
@@ -119,6 +120,9 @@ def main(tool: str, description: str, run: Callable[[Context], int],
 
     if needs_target and not args.target:
         p.error("a target is required")
+    if (max_target_length is not None and args.target is not None
+            and len(args.target) > max_target_length):
+        p.error(f"target must be at most {max_target_length} characters")
 
     if not args.yes:
         try:
