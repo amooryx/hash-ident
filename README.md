@@ -4,9 +4,11 @@
 
 # hash-ident
 
-> Identify hash types and suggest appropriate cracking modes
+> Suggest likely hash formats from an input string.
 
-Part of a red-team tooling collection for **authorised** security testing.
+`hash-ident` is an offline format-identification helper for authorized security
+testing, labs, and research. It does not verify hashes, access systems, crack
+values, or provide attack commands.
 
 ## Install
 
@@ -15,23 +17,37 @@ git clone https://github.com/amooryx/hash-ident.git
 cd hash-ident
 ```
 
+Requires Python 3.10 or later; there are no third-party dependencies.
+
 ## Usage
 
 ```bash
-python hash_ident.py <target>
+python hash_ident.py '<hash-or-encoded-value>'
 ```
 
-| Flag | Description |
-|---|---|
-| `-o, --output` | Write results to a file |
-| `-v, --verbose` | Verbose output |
-| `-y, --yes` | Skip the authorisation prompt |
+The tool asks for authorization before processing input. `-y` skips that
+confirmation, and `-o FILE` writes a JSON report.
+
+Hexadecimal values are reported as **ambiguous candidates** based on character
+set and length alone: many different algorithms produce outputs with the same
+length, so this cannot identify the algorithm conclusively. Structured formats
+are matched against their prefixes and expected shapes, but should still be
+verified independently. Inputs longer than 4,096 characters are rejected.
+Unsupported and malformed values are reported as unrecognized rather than
+guessed.
+
+## Tests
+
+Run the offline unit tests with:
+
+```bash
+python -m unittest discover -s tests -v
+```
 
 ## Disclaimer
 
-> **Authorised security testing only.** Use this against systems you own or have
-> explicit written permission to test. The tool prompts for authorisation before
-> acting and is provided for professional engagements, labs, and research.
+Use this tool only for systems and data you own or have explicit permission to
+assess.
 
 ## Author
 

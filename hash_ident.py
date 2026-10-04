@@ -1,33 +1,87 @@
-import re, rclib
+"""Identify likely hash formats without attempting to verify or crack them."""
+from __future__ import annotations
+
+import re
+
+import rclib
+
+MAX_INPUT_LENGTH = 4096
+
+_HEX_CANDIDATES = {
+    32: ["MD5", "MD4", "NTLM"],
+    40: ["SHA-1", "RIPEMD-160"],
+    56: ["SHA-224", "SHA3-224"],
+    64: ["SHA-256", "SHA3-256", "BLAKE2s"],
+    96: ["SHA-384", "SHA3-384"],
+    128: ["SHA-512", "SHA3-512", "Whirlpool", "BLAKE2b"],
+}
+
+_STRUCTURED_FORMATS = (
+    (re.compile(r"\$2[aby]\$(?:0[4-9]|[12][0-9]|3[01])\$[./A-Za-z0-9]{53}"), "bcrypt"),
+    (re.compile(r"\$1\$[./A-Za-z0-9]{1,8}\$[./A-Za-z0-9]{22}"), "md5crypt"),
+    (re.compile(r"\$5\$(?:rounds=[0-9]+\$)?[./A-Za-z0-9]{1,16}\$[./A-Za-z0-9]{43}"), "sha256crypt"),
+    (re.compile(r"\$6\$(?:rounds=[0-9]+\$)?[./A-Za-z0-9]{1,16}\$[./A-Za-z0-9]{86}"), "sha512crypt"),
+    (re.compile(r"\$argon2(?:id|i|d)\$v=[0-9]+\$m=[0-9]+,t=[0-9]+,p=[0-9]+\$[A-Za-z0-9+/]+\$[A-Za-z0-9+/]+"), "Argon2"),
+)
+
+
+def identify_hash(value: str) -> dict:
+    """Return candidate formats and the evidence supporting the classification."""
+    if len(value) > MAX_INPUT_LENGTH:
+        return {
+            "candidates": [],
+            "basis": f"input exceeds the {MAX_INPUT_LENGTH}-character limit",
+        }
+    value = value.strip()
+    if not value:
+        return {"candidates": [], "basis": "empty input"}
+
+    if re.fullmatch(r"\*[0-9A-Fa-f]{40}", value):
+        return {"candidates": ["MySQL 4.1+"], "basis": "recognized prefix and structure"}
+
+    for pattern, name in _STRUCTURED_FORMATS:
+        if pattern.fullmatch(value):
+            return {"candidates": [name], "basis": "recognized prefix and structure"}
+
+    if re.fullmatch(r"[0-9A-Fa-f]+", value):
+        candidates = _HEX_CANDIDATES.get(len(value), [])
+        return {
+            "candidates": candidates,
+            "basis": (
+                "hexadecimal encoding and length only; these candidates are ambiguous"
+                if candidates
+                else "hexadecimal encoding and unsupported length"
+            ),
+        }
+
+    return {"candidates": [], "basis": "no supported format pattern matched"}
+
+
 def run(ctx):
-    h = ctx.target.strip()
-    hx = bool(re.fullmatch(r"[0-9a-fA-F]+", h))
-    n = len(h)
-    cands = []
-    if hx and n==32: cands=["MD5","NTLM","MD4","LM (half)"]
-    elif hx and n==40: cands=["SHA-1","MySQL5.x (with *)"]
-    elif hx and n==56: cands=["SHA-224"]
-    elif hx and n==64: cands=["SHA-256","SHA3-256","BLAKE2s"]
-    elif hx and n==96: cands=["SHA-384"]
-    elif hx and n==128: cands=["SHA-512","SHA3-512","Whirlpool"]
-    if h.startswith("$2a$") or h.startswith("$2b$") or h.startswith("$2y$"): cands=["bcrypt"]
-    elif h.startswith("$1$"): cands=["md5crypt"]
-    elif h.startswith("$5$"): cands=["sha256crypt"]
-    elif h.startswith("$6$"): cands=["sha512crypt"]
-    elif h.startswith("$argon2"): cands=["Argon2"]
-    elif h.startswith("$krb5tgs$"): cands=["Kerberos TGS-REP (kerberoast)"]
-    elif h.startswith("$krb5asrep$"): cands=["Kerberos AS-REP (asreproast)"]
-    elif ":" in h and re.fullmatch(r"[0-9a-fA-F]{32}:[0-9a-fA-F]{32}", h): cands=["NetNTLM / PWDUMP"]
-    if not cands:
-        ctx.warn("unrecognised format"); return 0
-    ctx.good(f"length {n}" + (" hex" if hx else ""))
-    for c in cands: ctx.finding(f"candidate: {c}", "info")
-    # hashcat mode hints
-    modes = {"MD5":"0","NTLM":"1000","SHA-1":"100","SHA-256":"1400","SHA-512":"1800",
-             "bcrypt":"3200","sha512crypt":"1800","Kerberos TGS-REP (kerberoast)":"13100",
-             "Kerberos AS-REP (asreproast)":"18200","NetNTLM / PWDUMP":"5600"}
-    for c in cands:
-        if c in modes: ctx.step(f"hashcat -m {modes[c]}  ({c})")
-    ctx.data["candidates"] = cands
+    value = ctx.target.strip()
+    result = identify_hash(ctx.target)
+    ctx.data.update(result)
+    ctx.data["input_length"] = len(ctx.target)
+
+    if len(ctx.target) > MAX_INPUT_LENGTH:
+        ctx.warn(result["basis"])
+        return 2
+    if not result["candidates"]:
+        ctx.warn(result["basis"])
+        return 0
+
+    ctx.good(f"{len(value)} characters; {result['basis']}")
+    for candidate in result["candidates"]:
+        ctx.finding(f"possible format: {candidate}", "info")
     return 0
-rclib.main("hash-ident", "Identify hash type + hashcat mode", run)
+
+
+if __name__ == "__main__":
+    raise SystemExit(
+        rclib.main(
+            "hash-ident",
+            "Identify likely hash formats",
+            run,
+            max_target_length=MAX_INPUT_LENGTH,
+        )
+    )
